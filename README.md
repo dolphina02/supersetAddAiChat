@@ -2,6 +2,8 @@
 
 🤖 **AI-Enhanced Data Visualization Platform** - Apache Superset integrated with intelligent AI assistant for natural language data exploration and visualization.
 
+> 🇰🇷 **한국어 문서**: [README_KO.md](./README_KO.md) | 🇺🇸 **English**: README.md
+
 ## 🚀 What's New
 
 This is Apache Superset enhanced with a powerful AI Assistant that allows you to:
