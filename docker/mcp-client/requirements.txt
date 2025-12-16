@@ -1,0 +1,18 @@
+# MCP Client dependencies
+fastapi>=0.104.0
+uvicorn>=0.24.0
+httpx>=0.25.0
+requests>=2.31.0
+pydantic>=2.5.0
+python-dotenv>=1.0.0
+
+# OpenAI 공식 클라이언트 (OpenRouter 지원)
+openai>=1.0.0
+
+# MCP 정식 라이브러리
+mcp>=1.0.0
+
+# Optional: for local model serving
+# torch>=2.1.0
+# transformers>=4.36.0
+# accelerate>=0.24.0
