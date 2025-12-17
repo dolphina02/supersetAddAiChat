@@ -99,6 +99,7 @@
     "@dnd-kit/utilities": "^3.2.2",
     "@emotion/cache": "^11.4.0",
     "@emotion/react": "^11.14.0",
+    "@microsoft/fetch-event-source": "^2.0.1",
     "@emotion/styled": "^11.14.1",
     "@reduxjs/toolkit": "^1.9.3",
     "@rjsf/core": "^5.24.13",

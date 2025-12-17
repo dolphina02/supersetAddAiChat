@@ -97,38 +97,33 @@ class McpClientApi(BaseApi):
             # Validate request data
             schema = ChatRequestSchema()
             data = schema.load(request.json)
-            
-            # Ensure we use GPT-4o-mini for function calling support
-            if not data.get('model') or data.get('model') == 'qwen/qwen-2.5-7b-instruct':
-                data['model'] = 'openai/gpt-4o-mini'
+
 
             def generate_stream():
                 """Generate streaming response from MCP client"""
                 try:
+                    from httpx_sse import connect_sse
+                    
                     with httpx.Client(timeout=60.0) as client:
-                        with client.stream(
+                        with connect_sse(
+                            client,
                             "POST",
                             f"{self.mcp_client_url}/chat",
                             json=data,
-                            headers={
-                                "Content-Type": "application/json",
-                                "Accept": "text/event-stream"
-                            }
-                        ) as response:
+                            headers={"Content-Type": "application/json"}
+                        ) as event_source:
                             
-                            if response.status_code != 200:
+                            if event_source.response.status_code != 200:
                                 error_data = {
                                     "type": "error",
-                                    "error": f"MCP client error: {response.status_code}",
+                                    "error": f"MCP client error: {event_source.response.status_code}",
                                     "timestamp": datetime.now().isoformat()
                                 }
                                 yield f"data: {json.dumps(error_data)}\n\n"
                                 return
                             
-                            # Stream the response
-                            for chunk in response.iter_text():
-                                if chunk:
-                                    yield chunk
+                            for sse in event_source.iter_sse():
+                                yield f"data: {sse.data}\n\n"
                                     
                 except Exception as e:
                     logger.error(f"Streaming error: {e}")

@@ -156,107 +156,67 @@ const AiChat = ({ onSendMessage }: AiChatProps) => {
 
   const callMcpClient = async (message: string): Promise<string> => {
     return new Promise((resolve, reject) => {
-      try {
-        // 스트리밍 응답을 위한 fetch 요청
-        fetch('/api/v1/mcp_client/chat', {
+      let fullResponse = '';
+      const ctrl = new AbortController();
+
+      import('@microsoft/fetch-event-source').then(({ fetchEventSource }) => {
+        fetchEventSource('/api/v1/mcp_client/chat', {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
-            'Accept': 'text/event-stream',
           },
           body: JSON.stringify({
-            messages: [
-              {
-                role: 'user',
-                content: message,
-              },
-            ],
+            messages: [{ role: 'user', content: message }],
             model: 'openai/gpt-4o-mini',
             temperature: 0.7,
             max_tokens: 2000,
           }),
-        }).then(response => {
-          if (!response.ok) {
-            throw new Error(`HTTP error! status: ${response.status}`);
-          }
-
-          const reader = response.body?.getReader();
-          if (!reader) {
-            throw new Error('Response body is not readable');
-          }
-
-          let fullResponse = '';
-          let currentToolMessage = '';
-
-          const readStream = () => {
-            reader.read().then(({ done, value }) => {
-              if (done) {
-                resolve(fullResponse || '응답을 받지 못했습니다.');
-                return;
+          signal: ctrl.signal,
+          onmessage(ev) {
+            try {
+              const data = JSON.parse(ev.data);
+              
+              switch (data.type) {
+                case 'tool_start':
+                  updateCurrentMessage(`🔧 ${data.tool_name} 실행 중...`);
+                  break;
+                case 'progress':
+                  updateCurrentMessage(`📊 처리 중... ${data.content || ''}`);
+                  break;
+                case 'tool_result':
+                  updateCurrentMessage(`✅ ${data.tool_name} 완료`);
+                  break;
+                case 'content':
+                  fullResponse += data.content || '';
+                  updateCurrentMessage(fullResponse);
+                  break;
+                case 'error':
+                  console.error('Stream error:', data.error);
+                  ctrl.abort();
+                  reject(new Error(data.error));
+                  break;
+                case 'done':
+                  resolve(fullResponse);
+                  break;
               }
-
-              // 텍스트 디코딩
-              const chunk = new TextDecoder().decode(value);
-              const lines = chunk.split('\n');
-
-              for (const line of lines) {
-                if (line.startsWith('data: ')) {
-                  try {
-                    const data = JSON.parse(line.slice(6));
-                    
-                    switch (data.type) {
-                      case 'tool_start':
-                        currentToolMessage = `🔧 ${data.tool_name} 실행 중...`;
-                        // 실시간으로 메시지 업데이트 (선택사항)
-                        updateCurrentMessage(currentToolMessage);
-                        break;
-                        
-                      case 'progress':
-                        currentToolMessage = data.content || '처리 중...';
-                        updateCurrentMessage(currentToolMessage);
-                        break;
-                        
-                      case 'tool_result':
-                        currentToolMessage = `✅ ${data.tool_name} 완료`;
-                        updateCurrentMessage(currentToolMessage);
-                        break;
-                        
-                      case 'content':
-                        fullResponse += data.content || '';
-                        // 실시간으로 응답 내용 업데이트
-                        updateCurrentMessage(fullResponse);
-                        break;
-                        
-                      case 'error':
-                        console.error('스트리밍 오류:', data.error);
-                        reject(new Error(data.error));
-                        return;
-                        
-                      case 'done':
-                        resolve(fullResponse || '응답 완료');
-                        return;
-                    }
-                  } catch (parseError) {
-                    console.warn('JSON 파싱 오류:', parseError, 'Line:', line);
-                  }
-                }
-              }
-
-              readStream(); // 다음 청크 읽기
-            }).catch(reject);
-          };
-
-          readStream();
-        }).catch(error => {
-          console.error('MCP Client API 호출 실패:', error);
-          // Fallback to simulation if MCP client is not available
-          simulateAiResponse(message).then(resolve).catch(reject);
+            } catch (e) {
+              console.warn('Failed to parse SSE message:', e);
+            }
+          },
+          onerror(err) {
+            console.error('SSE connection error:', err);
+            // Don't retry, just fail
+            reject(err);
+            throw err; // rethrow to stop retries
+          },
+          onclose() {
+            resolve(fullResponse || '응답 완료');
+          }
+        }).catch(err => {
+            console.error('Fetch Event Source failed:', err);
+            reject(err);
         });
-
-      } catch (error) {
-        console.error('스트리밍 설정 실패:', error);
-        simulateAiResponse(message).then(resolve).catch(reject);
-      }
+      });
     });
   };
 
@@ -274,19 +234,6 @@ const AiChat = ({ onSendMessage }: AiChatProps) => {
       
       return newMessages;
     });
-  };
-
-  const simulateAiResponse = async (message: string): Promise<string> => {
-    // 실제 AI API 호출 대신 시뮬레이션 (fallback)
-    await new Promise(resolve => setTimeout(resolve, 1000));
-    
-    if (message.includes('대시보드')) {
-      return '대시보드 관련 질문이시군요! 대시보드 생성, 편집, 공유에 대해 도움을 드릴 수 있습니다. 구체적으로 어떤 부분이 궁금하신가요?';
-    }
-    if (message.includes('차트')) {
-      return '차트에 대한 질문이시네요! Superset에서는 다양한 차트 타입을 지원합니다. 어떤 종류의 차트를 만들고 싶으신가요?';
-    }
-    return `"${message}"에 대한 답변을 준비 중입니다. 좀 더 구체적인 질문을 해주시면 더 정확한 답변을 드릴 수 있어요!`;
   };
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
