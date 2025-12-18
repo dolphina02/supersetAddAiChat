@@ -288,12 +288,13 @@ services:
       - path: docker/.env-local # optional override
         required: false
     environment:
-      - MCP_SERVER_URL=http://superset:5008
+      - MCP_SERVER_URL=http://superset:5008/mcp
       - DEFAULT_MODEL=openai/gpt-4o-mini
       - PORT=8000
     restart: unless-stopped
     depends_on:
-      - superset
+      superset:
+        condition: service_healthy
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
       interval: 30s

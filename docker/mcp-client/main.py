@@ -2,12 +2,14 @@
 """
 Streaming MCP Client for Superset AI Assistant
 
-Standard MCP Protocol Client:
-- Uses MCP Python SDK (mcp) for stdio transport
-- Connects to local Superset MCP Service via process pipe
-- Server-Sent Events (SSE) based real-time response for frontend
+MCP Protocol Client with streamable-http Transport:
+- Uses MCP Python SDK (mcp) streamable-http transport
+- Connects to Superset MCP Service (FastMCP server)
+- Matches FastMCP's streamable-http transport protocol
 - OpenRouter streaming API integration
 - Agentic Loop (Multi-turn execution)
+
+Transport: streamable-http (compatible with FastMCP)
 """
 
 import asyncio
@@ -45,7 +47,9 @@ logger = logging.getLogger(__name__)
 
 # Helper to get MCP Server URL
 def get_mcp_server_url() -> str:
-    return os.getenv("MCP_SERVER_URL", "http://superset:5008/sse")
+    # FastMCP streamable-http transport uses /mcp (NO trailing slash!)
+    # Trailing slash causes 307 redirect which breaks SSE connection
+    return os.getenv("MCP_SERVER_URL", "http://superset:5008/mcp")
 
 # Configuration
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY", "")
@@ -60,44 +64,114 @@ state = GlobalState()
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Manage the lifecycle of the MCP Client connection"""
+    """
+    Manage the lifecycle of the MCP Client connection
+    
+    Using streamable-http transport to match FastMCP server
+    """
     mcp_url = get_mcp_server_url()
-    logger.info(f"🚀 Starting MCP Client (SSE Transport) calling {mcp_url}...")
+    logger.info("=" * 60)
+    logger.info("🚀 Starting MCP Client (streamable-http Transport)")
+    logger.info(f"📡 Target MCP Server: {mcp_url}")
+    logger.info("=" * 60)
     
     try:
         from contextlib import AsyncExitStack
-        from mcp.client.sse import sse_client
+        from mcp.client.streamable_http import streamable_http_client
 
         exit_stack = AsyncExitStack()
         
-        # Connect via SSE (Network)
-        # sse_client yields (read_stream, write_stream) just like stdio_client
-        read_stream, write_stream = await exit_stack.enter_async_context(
-            sse_client(mcp_url)
+        # ============================================================
+        # STEP 1: Connect via streamable-http transport
+        # This matches FastMCP's streamable-http server transport
+        # ============================================================
+        logger.info("📬 STEP 1: Connecting via streamable-http...")
+        logger.debug(f"   → Connecting to {mcp_url}")
+        
+        read_stream, write_stream, get_session_id = await exit_stack.enter_async_context(
+            streamable_http_client(mcp_url)
         )
+        
+        logger.info("✓ streamable-http connection established")
+        logger.debug(f"   Session ID: {get_session_id() if get_session_id else 'N/A'}")
+        
+        # ============================================================
+        # STEP 2: Create MCP ClientSession
+        # ============================================================
+        logger.info("🔧 STEP 2: Creating MCP ClientSession...")
         
         session = await exit_stack.enter_async_context(
             ClientSession(read_stream, write_stream)
         )
         
+        logger.info("✓ ClientSession created")
+        
+        # ============================================================
+        # STEP 3: Initialize MCP Protocol
+        # ============================================================
+        logger.info("🤝 STEP 3: Initializing MCP session...")
+        logger.debug("   → Sending initialize request")
+        
         await session.initialize()
         
+        logger.info("✓ Initialize response received")
+        
+        # Store session in global state
         state.session = session
         state.exit_stack = exit_stack
         
+        # ============================================================
+        # STEP 4: List Available Tools
+        # ============================================================
+        logger.info("📋 STEP 4: Requesting tool list...")
+        logger.debug("   → Sending tools/list request")
+        
         tools = await session.list_tools()
-        logger.info(f"✅ Connected to Superset MCP! Available tools: {len(tools.tools)}")
+        
+        logger.info("✓ Tool list received")
+        
+        # ============================================================
+        # SUCCESS: Connection Established
+        # ============================================================
+        logger.info("=" * 60)
+        logger.info(f"✅ MCP Connection Established!")
+        logger.info(f"   Transport: streamable-http")
+        logger.info(f"   Available tools: {len(tools.tools)}")
+        logger.info("=" * 60)
+        
+        # Log first few tools
+        if tools.tools:
+            logger.info("Sample tools:")
+            for tool in tools.tools[:5]:
+                desc = tool.description[:50] + "..." if len(tool.description) > 50 else tool.description
+                logger.info(f"  • {tool.name}: {desc}")
+            if len(tools.tools) > 5:
+                logger.info(f"  ... and {len(tools.tools) - 5} more")
+        
+        logger.info("=" * 60)
         
         yield
         
     except Exception as e:
-        logger.error(f"❌ Failed to connect to MCP Server: {e}")
-        # Don't raise here, allow the app to start even if MCP is down (health check will fail)
+        logger.error("=" * 60)
+        logger.error("❌ MCP Connection Failed!")
+        logger.error(f"   URL: {mcp_url}")
+        logger.error(f"   Error: {e}")
+        logger.error("=" * 60)
+        logger.debug("Full traceback:", exc_info=True)
+        
+        # Don't raise here, allow the app to start even if MCP is down
+        # Health check endpoint will report the connection status
         yield
+        
     finally:
         logger.info("🛑 Shutting down MCP Client...")
         if state.exit_stack:
-            await state.exit_stack.aclose()
+            try:
+                await state.exit_stack.aclose()
+                logger.info("✓ MCP connection closed cleanly")
+            except Exception as e:
+                logger.error(f"Error during shutdown: {e}")
 
 
 app = FastAPI(
@@ -141,9 +215,22 @@ class StreamingOpenRouterClient:
     
     def __init__(self, api_key: str):
         self.api_key = api_key
+        
+        # Debug: Log API key status
+        if not api_key or api_key.strip() == "":
+            logger.error("❌ OpenRouter API key is EMPTY!")
+        else:
+            logger.info(f"✓ OpenRouter API key loaded: {api_key[:10]}...{api_key[-4:]}")
+        
+        # OpenRouter requires API key in Authorization header
+        # The OpenAI client automatically adds: Authorization: Bearer {api_key}
         self.client = AsyncOpenAI(
             base_url="https://openrouter.ai/api/v1",
             api_key=api_key,
+            default_headers={
+                "HTTP-Referer": "http://localhost:8088",
+                "X-Title": "Superset AI Assistant",
+            }
         )
     
     def _convert_mcp_tool_to_openai_function(self, mcp_tool: Tool) -> Dict[str, Any]:
@@ -178,10 +265,6 @@ class StreamingOpenRouterClient:
                 "temperature": temperature,
                 "max_tokens": max_tokens,
                 "stream": True,
-                "extra_headers": {
-                    "HTTP-Referer": "http://localhost:8088",
-                    "X-Title": "Superset AI Assistant",
-                }
             }
             if openai_tools:
                 kwargs["tools"] = openai_tools
@@ -229,7 +312,14 @@ except Exception as e:
 
 @app.get("/health")
 async def health_check():
-    return {"status": "healthy", "transport": "stdio", "connected": state.session is not None}
+    """Health check endpoint - returns MCP connection status"""
+    is_connected = state.session is not None
+    return {
+        "status": "healthy" if is_connected else "degraded",
+        "transport": "streamable-http",
+        "connected": is_connected,
+        "message": "MCP session active" if is_connected else "MCP session not connected"
+    }
 
 @app.get("/models")
 async def list_models():

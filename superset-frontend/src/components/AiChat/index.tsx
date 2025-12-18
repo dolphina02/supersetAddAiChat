@@ -27,6 +27,10 @@ import {
   CompressOutlined,
   MinusOutlined 
 } from '@ant-design/icons';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
+import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
+import { vscDarkPlus } from 'react-syntax-highlighter/dist/esm/styles/prism';
 
 interface Message {
   id: string;
@@ -366,6 +370,111 @@ const AiChat = ({ onSendMessage }: AiChatProps) => {
     font-size: 14px;
     line-height: 1.4;
     border: ${isUser ? 'none' : `1px solid ${theme.colorBorder}`};
+    
+    /* Markdown 스타일링 */
+    .markdown-content {
+      word-wrap: break-word;
+      
+      /* 표 스타일 */
+      table {
+        border-collapse: collapse;
+        width: 100%;
+        margin: 12px 0;
+        font-size: 13px;
+        background: ${theme.colorBgContainer};
+        border-radius: 4px;
+        overflow: hidden;
+      }
+      
+      th, td {
+        border: 1px solid ${theme.colorBorder};
+        padding: 8px 12px;
+        text-align: left;
+      }
+      
+      th {
+        background: ${theme.colorFillQuaternary};
+        font-weight: 600;
+        color: ${theme.colorText};
+      }
+      
+      tr:nth-child(even) {
+        background: ${theme.colorFillQuaternary}40;
+      }
+      
+      /* 코드 블록 */
+      pre {
+        margin: 8px 0;
+        border-radius: 6px;
+        overflow-x: auto;
+      }
+      
+      code {
+        font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+        font-size: 12px;
+      }
+      
+      /* 인라인 코드 */
+      p code, li code {
+        background: ${theme.colorFillQuaternary};
+        padding: 2px 6px;
+        border-radius: 3px;
+        font-size: 12px;
+        color: ${theme.colorError};
+      }
+      
+      /* 리스트 */
+      ul, ol {
+        margin: 8px 0;
+        padding-left: 24px;
+      }
+      
+      li {
+        margin: 4px 0;
+      }
+      
+      /* 제목 */
+      h1, h2, h3, h4, h5, h6 {
+        margin: 12px 0 8px 0;
+        font-weight: 600;
+        color: ${theme.colorText};
+      }
+      
+      h1 { font-size: 18px; }
+      h2 { font-size: 16px; }
+      h3 { font-size: 15px; }
+      h4 { font-size: 14px; }
+      
+      /* 단락 */
+      p {
+        margin: 8px 0;
+      }
+      
+      /* 인용구 */
+      blockquote {
+        border-left: 3px solid ${theme.colorPrimary};
+        padding-left: 12px;
+        margin: 8px 0;
+        color: ${theme.colorTextSecondary};
+      }
+      
+      /* 구분선 */
+      hr {
+        border: none;
+        border-top: 1px solid ${theme.colorBorder};
+        margin: 12px 0;
+      }
+      
+      /* 링크 */
+      a {
+        color: ${theme.colorPrimary};
+        text-decoration: none;
+        
+        &:hover {
+          text-decoration: underline;
+        }
+      }
+    }
   `;
 
   const inputAreaStyles = css`
@@ -467,7 +576,36 @@ const AiChat = ({ onSendMessage }: AiChatProps) => {
             {messages.map(message => (
               <div key={message.id} css={messageStyles(message.isUser)}>
                 <div css={messageBubbleStyles(message.isUser)}>
-                  {message.text}
+                  {message.isUser ? (
+                    message.text
+                  ) : (
+                    <div className="markdown-content">
+                      <ReactMarkdown
+                        remarkPlugins={[remarkGfm]}
+                        components={{
+                          code({ node, inline, className, children, ...props }) {
+                            const match = /language-(\w+)/.exec(className || '');
+                            return !inline && match ? (
+                              <SyntaxHighlighter
+                                style={vscDarkPlus}
+                                language={match[1]}
+                                PreTag="div"
+                                {...props}
+                              >
+                                {String(children).replace(/\n$/, '')}
+                              </SyntaxHighlighter>
+                            ) : (
+                              <code className={className} {...props}>
+                                {children}
+                              </code>
+                            );
+                          },
+                        }}
+                      >
+                        {message.text}
+                      </ReactMarkdown>
+                    </div>
+                  )}
                 </div>
               </div>
             ))}
