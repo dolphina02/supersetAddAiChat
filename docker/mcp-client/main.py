@@ -30,9 +30,10 @@ import uvicorn
 from openai import AsyncOpenAI
 
 # MCP Official Client Library
-from mcp import ClientSession, StdioServerParameters
-from mcp.client.stdio import stdio_client
+# MCP Official Client Library
+from mcp import ClientSession
 from mcp.types import Tool
+# Note: sse_client is imported inside lifespan to avoid circular imports or runtime errors if not needed
 
 # Configure structured logging
 LOG_LEVEL = logging.DEBUG if os.getenv("DEBUG", "false").lower() == "true" else logging.INFO
@@ -42,10 +43,9 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Helper to find python executable
-def get_python_command() -> str:
-    # Use specific python path if provided, otherwise default to "python"
-    return os.getenv("SUP_PYTHON_PATH", "python")
+# Helper to get MCP Server URL
+def get_mcp_server_url() -> str:
+    return os.getenv("MCP_SERVER_URL", "http://superset:5008/sse")
 
 # Configuration
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY", "")
@@ -61,27 +61,19 @@ state = GlobalState()
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Manage the lifecycle of the MCP Client connection"""
-    logger.info("🚀 Starting MCP Client (Stdio Transport)...")
-    
-    python_cmd = get_python_command()
-    server_params = StdioServerParameters(
-        command=python_cmd,
-        args=["-m", "superset.mcp_service"],
-        env={
-            **os.environ,
-            "FASTMCP_TRANSPORT": "stdio",
-            "PYTHONUNBUFFERED": "1" 
-        }
-    )
-    
-    logger.info(f"🔌 Connecting to local process: {python_cmd} -m superset.mcp_service")
+    mcp_url = get_mcp_server_url()
+    logger.info(f"🚀 Starting MCP Client (SSE Transport) calling {mcp_url}...")
     
     try:
         from contextlib import AsyncExitStack
+        from mcp.client.sse import sse_client
+
         exit_stack = AsyncExitStack()
         
+        # Connect via SSE (Network)
+        # sse_client yields (read_stream, write_stream) just like stdio_client
         read_stream, write_stream = await exit_stack.enter_async_context(
-            stdio_client(server_params)
+            sse_client(mcp_url)
         )
         
         session = await exit_stack.enter_async_context(
@@ -94,13 +86,14 @@ async def lifespan(app: FastAPI):
         state.exit_stack = exit_stack
         
         tools = await session.list_tools()
-        logger.info(f"✅ Connected! Available tools: {len(tools.tools)}")
+        logger.info(f"✅ Connected to Superset MCP! Available tools: {len(tools.tools)}")
         
         yield
         
     except Exception as e:
-        logger.error(f"❌ Failed to start MCP Client: {e}")
-        raise e
+        logger.error(f"❌ Failed to connect to MCP Server: {e}")
+        # Don't raise here, allow the app to start even if MCP is down (health check will fail)
+        yield
     finally:
         logger.info("🛑 Shutting down MCP Client...")
         if state.exit_stack:
