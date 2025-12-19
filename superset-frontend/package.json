@@ -357,7 +357,7 @@
     "terser-webpack-plugin": "^5.3.14",
     "thread-loader": "^4.0.4",
     "ts-jest": "^29.4.5",
-    "ts-loader": "^9.5.1",
+    "ts-loader": "^9.5.4",
     "tscw-config": "^1.1.2",
     "tsx": "^4.20.3",
     "typescript": "5.4.5",
