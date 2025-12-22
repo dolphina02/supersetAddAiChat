@@ -488,7 +488,35 @@ def dashboard_serializer(dashboard: "Dashboard") -> DashboardInfo:
 
 
 def serialize_dashboard_object(dashboard: Any) -> DashboardInfo:
-    """Simple dashboard serializer that safely handles object attributes."""
+    """Simple dashboard serializer that safely handles object attributes.
+    
+    Safely handles lazy-loaded relationships by checking if they're loaded
+    before accessing them. This prevents SQLAlchemy DetachedInstanceError
+    when the object is not bound to a session.
+    """
+    from sqlalchemy.orm import object_session
+    from sqlalchemy.inspection import inspect
+    
+    # Helper to safely get relationship data
+    def safe_get_relationship(obj: Any, attr_name: str) -> list:
+        """Safely get relationship data, returning empty list if not loaded."""
+        try:
+            # Check if object is bound to a session
+            if object_session(obj) is None:
+                # Object is detached, check if relationship is already loaded
+                insp = inspect(obj)
+                if attr_name in insp.unloaded:
+                    # Relationship not loaded, return empty list
+                    return []
+            # Relationship is loaded or object is in session, safe to access
+            return getattr(obj, attr_name, [])
+        except Exception:
+            # Any error, return empty list
+            return []
+    
+    # Safely get slices for chart_count and charts
+    slices = safe_get_relationship(dashboard, "slices")
+    
     return DashboardInfo(
         id=getattr(dashboard, "id", None),
         dashboard_title=getattr(dashboard, "dashboard_title", None),
@@ -513,13 +541,9 @@ def serialize_dashboard_object(dashboard: Any) -> DashboardInfo:
         if getattr(dashboard, "uuid", None)
         else None,
         thumbnail_url=getattr(dashboard, "thumbnail_url", None),
-        chart_count=len(getattr(dashboard, "slices", [])),
-        owners=getattr(dashboard, "owners", []),
-        tags=getattr(dashboard, "tags", []),
-        roles=getattr(dashboard, "roles", []),
-        charts=[
-            serialize_chart_object(chart) for chart in getattr(dashboard, "slices", [])
-        ]
-        if getattr(dashboard, "slices", None)
-        else [],
+        chart_count=len(slices),
+        owners=safe_get_relationship(dashboard, "owners"),
+        tags=safe_get_relationship(dashboard, "tags"),
+        roles=safe_get_relationship(dashboard, "roles"),
+        charts=[serialize_chart_object(chart) for chart in slices] if slices else [],
     )
